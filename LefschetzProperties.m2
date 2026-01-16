@@ -23,11 +23,12 @@ export {
     "hasWLP",
     "socleDegree",
     -- Koszul tail methods
-    "checkKoszulTail",
+    "hasKoszulTail",
     "koszulTails",
     -- optional arguments and symbols
     "MaxTries",
-    "LinearForm"
+    "LinearForm",
+    "Maximal"
 }
 
 -----------------------------------------------------------------------------
@@ -35,7 +36,6 @@ export {
 -----------------------------------------------------------------------------
 load "./LefschetzProperties/Code/lefschetz.m2"
 load "./LefschetzProperties/Code/koszulTails.m2"
-load "./LefschetzProperties/Code/combinatorics.m2"
 
 -----------------------------------------------------------------------------
 -- **DOCUMENTATION** --
@@ -43,6 +43,7 @@ load "./LefschetzProperties/Code/combinatorics.m2"
 beginDocumentation()
 load "./LefschetzProperties/Documentation/packageDocumentation.m2"
 load "./LefschetzProperties/Documentation/lefschetzDocumentation.m2"
+load "./LefschetzProperties/Documentation/koszulTailsDocumentation.m2"
 
 -----------------------------------------------------------------------------
 -- **TESTS** --
