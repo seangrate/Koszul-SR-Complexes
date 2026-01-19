@@ -25,6 +25,8 @@ export {
     -- Koszul tail methods
     "hasKoszulTail",
     "koszulTails",
+    -- Hessians
+    "hessian",
     -- optional arguments and symbols
     "MaxTries",
     "LinearForm",
@@ -36,6 +38,7 @@ export {
 -----------------------------------------------------------------------------
 load "./LefschetzProperties/Code/lefschetz.m2"
 load "./LefschetzProperties/Code/koszulTails.m2"
+load "./LefschetzProperties/Code/hessians.m2"
 
 -----------------------------------------------------------------------------
 -- **DOCUMENTATION** --
@@ -44,12 +47,14 @@ beginDocumentation()
 load "./LefschetzProperties/Documentation/packageDocumentation.m2"
 load "./LefschetzProperties/Documentation/lefschetzDocumentation.m2"
 load "./LefschetzProperties/Documentation/koszulTailsDocumentation.m2"
+load "./LefschetzProperties/Documentation/hessiansDocumentation.m2"
 
 -----------------------------------------------------------------------------
 -- **TESTS** --
 -----------------------------------------------------------------------------
 load "./LefschetzProperties/Tests/lefschetzTests.m2"
 load "./LefschetzProperties/Tests/koszulTailsTests.m2"
+load "./LefschetzProperties/Tests/hessiansTests.m2"
 end
 
 -----------------------------------------------------------------------------
