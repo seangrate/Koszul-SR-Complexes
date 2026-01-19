@@ -46,6 +46,7 @@ hasWLP Ideal := Boolean => opts -> (I) -> (
     );
     false
 )
+hasWLP RingElement := Boolean => opts -> (F) -> (hasWLP inverseSystem F)
 hasWLP QuotientRing := Boolean => opts -> (A) -> (hasWLP ideal presentation A)
 
 
@@ -57,7 +58,7 @@ hasSLP = method (
 )
 hasSLP RingElement := Boolean => opts -> (F) -> (
     -- This method is assuming F is the Macaulay dual generator of an Artinian
-    -- Gorenstein algebra!
+    -- Gorenstein algebra!)
     if F == 0_(ring F) then error "the input polynomial must be nonzero";
 
     I := inverseSystem F;

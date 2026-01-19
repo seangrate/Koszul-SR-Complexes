@@ -30,7 +30,7 @@ TEST ///
     -- FACT: Example 5.2 from Maeno-Watanabe [2009] does not have the WLP.
     R = QQ[u,v,x,y,z]
     F = x^2*u^3 + x*y*u^2*v + y^2*u*v^2 + z^2*v^3
-    assert(not hasWLP inverseSystem F)
+    assert(not hasWLP F)
 ///
 
 

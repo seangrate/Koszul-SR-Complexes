@@ -56,6 +56,7 @@ doc ///
   Key
     hasWLP
     (hasWLP, Ideal)
+    (hasWLP, RingElement)
     (hasWLP, QuotientRing)
     [hasWLP, MaxTries]
     [hasWLP, LinearForm]
@@ -63,9 +64,11 @@ doc ///
     checks the weak Lefschetz property
   Usage
     hasWLP I
+    hasWLP F
     hasWLP A
   Inputs
     I:Ideal
+    F:RingElement
     A:QuotientRing
   Outputs
     :Boolean
@@ -93,6 +96,15 @@ doc ///
       I = ideal(x^3, y^3, z^3, x*y*z)
       A = R / I
       hasWLP A
+    Text
+      When a {\tt RingElement} is passed as the argument, this is taken to be
+      \emph{the} Macaulay dual generator used to produce an Artinian Gorenstein
+      algebra, i.e., $A = S / \text{Ann}_S(F)$. The WLP is then checked on that
+      algebra.
+    Example
+      R = QQ[u,v,x,y,z]
+      F = x^2*u^3 + x*y*u^2*v + y^2*u*v^2 + z^2*v^3
+      hasWLP F
     Text
       One may also pass use the {\tt LinearForm} optional argument to test the
       WLP with a specific linear form.
