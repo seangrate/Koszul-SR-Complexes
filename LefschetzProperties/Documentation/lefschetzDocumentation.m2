@@ -57,9 +57,7 @@ doc ///
     hasWLP
     (hasWLP, Ideal)
     (hasWLP, QuotientRing)
-    MaxTries
     [hasWLP, MaxTries]
-    LinearForm
     [hasWLP, LinearForm]
   Headline
     checks the weak Lefschetz property
@@ -103,5 +101,78 @@ doc ///
     WLP. On the other hand, if {\tt false} is returned, this is a 
     \emph{probabilistic} check for the WLP.
   SeeAlso
-    isArtinian
+    hasSLP
 ///
+
+
+doc ///
+  Key
+    hasSLP
+    (hasSLP, RingElement)
+    -- (hasSLP, Ideal)
+    -- (hasSLP, QuotientRing)
+    [hasSLP, MaxTries]
+    [hasSLP, LinearForm]
+  Headline
+    checks the strong Lefschetz property
+  Usage
+    hasSLP F
+    hasSLP I
+    hasSLP A
+  Inputs
+    F:RingElement
+    I:Ideal
+    A:QuotientRing
+  Outputs
+    :Boolean
+  Description
+    Text
+      An Artinian algebra $A$ has the \emph{strong Lefschetz property} 
+      (\emph{WLP}) if there exists a general linear form $\ell \in A_1$ such 
+      that $\cdot \ell^k \colon A_d \to A_{d+k}$ has full rank for all 
+      $d \geq 0$ and $k \geq 0$.
+
+      When a {\tt RingElement} is passed, this must be a homogeneous polynomial
+      of degree $d$. It is interpretated as \emph{the} Macaulay dual generator
+      of an Artinian Gorenstein algebra, i.e., $A = S / \text{Ann}_S(F)$.
+    Example
+      R = QQ[x,y,z,w]
+      F = w^3*x*y + w*x^3*z + y^3*z^2
+      hasSLP F
+    Text
+      If $\cdot \ell$ is not full rank, {\tt MaxTries} (default value is $10$)
+      may be passed as an optional argument to specify how many linear forms to 
+      sample and check for the SLP. If one is found, then {\tt true} is returned;
+      otherwise, {\tt false} is returned.
+
+      One may also pass use the {\tt LinearForm} optional argument to test the
+      SLP with a specific linear form.
+  Caveat
+    If {\tt true} is returned, the Artinian algebra is guaranteed to have the 
+    SLP. On the other hand, if {\tt false} is returned, this is a 
+    \emph{probabilistic} check for the SLP.
+  SeeAlso
+    hasWLP
+///
+
+
+-- doc ///
+--   Key
+--     MaxTries
+--   Headline
+--     The maximum number of attempts to check for a Lefschetz element
+--   SeeAlso
+--     [MaxTries, hasWLP]
+--     [MaxTries, hasSLP]
+-- ///
+
+
+-- doc ///
+--   Key
+--     LinearForm
+--   Headline
+--     A linear form to use as a candidate Lefschetz element
+--   SeeAlso
+--     [LinearForm, hasWLP]
+--     [LinearForm, hasSLP]
+-- ///

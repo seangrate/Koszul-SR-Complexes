@@ -10,6 +10,9 @@ newPackage (
          HomePage => "https://seangrate.com/"}
     },
     Headline => "functions for working with Lefschetz properties",
+    PackageImports => {
+        "InverseSystems"
+    },
     PackageExports => {
         "SimplicialComplexes"
     }
@@ -20,6 +23,7 @@ export {
     -- "YoungDiagram",
     -- Lefschetz methods
     "isArtinian",
+    "hasSLP",
     "hasWLP",
     "socleDegree",
     -- Koszul tail methods
@@ -28,8 +32,8 @@ export {
     -- Hessians
     "hessian",
     -- optional arguments and symbols
-    "MaxTries",
     "LinearForm",
+    "MaxTries",
     "Maximal"
 }
 
