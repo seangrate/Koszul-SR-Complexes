@@ -41,6 +41,7 @@
 % Common commutative algebra
 \DeclareMathOperator{\Ann}{Ann}
 \DeclareMathOperator{\Betti}{Betti}
+\DeclareMathOperator{\codim}{codim}
 \DeclareMathOperator{\Ext}{Ext}
 \DeclareMathOperator{\HF}{HF}
 \DeclareMathOperator{\HP}{HP}
@@ -1583,9 +1584,36 @@ To really illustrate some of the utility of the $h$-vector, the following are so
     This is \Cref{theorem:sr hilbert poincare} in action!
 \end{example}
 
+\subsubsection{Alexander Dualtiy}
+Throughout mathematics ``duality'' is a powerful mechanism that allows one to interpret an object in two different---but virtually equivalent---ways.
+For simplicial complexes, a dual can be defined, and as such, algebraic properties on one side of the duality transfer to other algebraic properties on the other side. 
+
+\begin{definition}{\cite[Construction 62.2]{peeva_graded_2011}}
+    For a simplicial complex $\Delta$, its \emph{Alexander dual} is the simplicial complex
+    \begin{equation*}
+        \Delta^{\vee} = \left\{ [n] \setminus \tau \, \vert \, \tau \not\in \Delta \right\}.
+    \end{equation*}
+\end{definition}
+
+It turns out that $\Delta^{\vee}$ is truly dual to $\Delta$, i.e., $(\Delta^{\vee})^{\vee} = \Delta$~\cite[Exercise 62.3]{peeva_graded_2011}.
+Furthermore, the facets of $\Delta$ are in bijective correspondence with the minimal monomial generators of $I_{\Delta^{\vee}}$~\cite[Exercise 62.4]{peeva_graded_2011}.
+Using the Alexander dual, we get some elegant statements related to the Betti numbers of $I_\Delta$.
+
+\begin{theorem}{\cite{terai_alexander_1999, bayer_extremal_1999}}
+    For a simplicial complex $\Delta$,
+    \begin{equation*}
+        \pdim(S / I_{\Delta^{\vee}}) = \reg(I_\Delta).
+    \end{equation*}
+\end{theorem}
+
+\begin{theorem}{\cite{eagon_resolutions_1998}}
+    For a simplicial complex $\Delta$, the ideal $I_\Delta$ has a linear minimal free resolution if and only if $S / I_{\Delta^{\vee}}$ is Cohen-Macaulay.
+    In other words, $I_\Delta$ has a linear minimal free resolution if and only if $\pdim(S / I_{\Delta^\vee}) = \codim(I_{\Delta^\vee})$.
+\end{theorem}
+
 \vspace*{1cm}
 
-\noindent {\bf See Also}: Section 5.2 of~\cite{schenck_computational_2003}.
+\noindent {\bf See Also}: Section 5.2 of~\cite{schenck_computational_2003}, Section 62 of~\cite{peeva_graded_2011}.
 
 \vspace*{1cm}
 
@@ -1751,14 +1779,14 @@ Given a Stanley-Reisner ring $R/I_\Delta$, we can throw in the squares of the va
 Plenty of results are known about these algebras, so the following sections summarize a few of these.
 
 \subsubsection{\href{https://arxiv.org/abs/1706.05058}{Migliore-Nagel-Schenck}}
-\begin{lemma}{\cite[Lemma 2.1]{migliore_quadratic_2020}}
+\begin{lemma}{\cite[Lemma 2.1]{migliore_weak_2020}}
     If $A = R/(I_\delta + P)$, then the Hilbert series of $A$ is
     \begin{equation*}
         \HS(A) = \sum f_{i-1} t^i.
     \end{equation*}
 \end{lemma}
 
-\begin{corollary}{\cite[Corollary 2.2]{migliore_quadratic_2020}}
+\begin{corollary}{\cite[Corollary 2.2]{migliore_weak_2020}}
     The algebra $A = R/(I_\Delta + P)$ is level if and only if the flag complex is pure.
 \end{corollary}
 
@@ -1774,11 +1802,11 @@ Plenty of results are known about these algebras, so the following sections summ
     \end{equation*}
 \end{definition}
 
-\begin{lemma}{\cite[Lemma 2.3]{migliore_quadratic_2020}}
+\begin{lemma}{\cite[Lemma 2.3]{migliore_weak_2020}}
     SOME LEMMA ABOUT REMOVING A VERTEX.
 \end{lemma}
 
-\begin{lemma}{\cite[Lemma 2.4]{migliore_quadratic_2020}}
+\begin{lemma}{\cite[Lemma 2.4]{migliore_weak_2020}}
     SOME LEMMA ABOUT REMOVING AN EDGE.
 \end{lemma}
 
@@ -1832,7 +1860,7 @@ Plenty of results are known about these algebras, so the following sections summ
 \end{remark}
 
 \subsubsection{\href{https://arxiv.org/abs/2306.13274}{Holleben}}
-\begin{definition}{\cite[Definition 17]{holleben_lefschetz_2024}}
+\begin{definition}{\cite[Definition 17]{holleben_weak_2024}}
     Let $\Delta$ be a simplicial complex and $F_i$ the set of all $i$-dimensional faces of $\Delta$.
     The matrix $M(\Delta, i)$ is the $f_i \times f_{i-1}$ matrix such that the rows are labeled by $i$-faces, the columns are labeled by $(i-1)$-faces, and
     \begin{equation*}
@@ -1844,12 +1872,12 @@ Plenty of results are known about these algebras, so the following sections summ
     This matrix is called the \emph{$i$-th incidence matrix} of $\Delta$.
 \end{definition}
 
-\begin{lemma}{\cite[Lemma 23]{holleben_lefschetz_2024}}
+\begin{lemma}{\cite[Lemma 23]{holleben_weak_2024}}
     Let $\Delta$ be a simplicial complex, $A = A(\Delta)$, and $L = x_1 + \dots x_n$.
     The matrix that represents the multiplication map $\cdot L \colon A_i \to A_{i+1}$ is $M(\Delta, i)$, where the entries of $M(\Delta,i)$ are taken to be in $\KK$, the base field of $A$.
 \end{lemma}
 
-\begin{theorem}{\cite[Theorem 54]{holleben_lefschetz_2024}}
+\begin{theorem}{\cite[Theorem 54]{holleben_weak_2024}}
     Let $\Delta$ be a simplicial complex such that $f_0 \leq f_1$.
     Then one of the two following statements holds:
     \begin{enumerate}[label=(\arabic*)]
@@ -1859,12 +1887,12 @@ Plenty of results are known about these algebras, so the following sections summ
     \end{enumerate}
 \end{theorem}
 
-\begin{definition}{\cite[Definition 55]{holleben_lefschetz_2024}}
+\begin{definition}{\cite[Definition 55]{holleben_weak_2024}}
     Let $I \subseteq R = \KK[x_1,\dots,x_n]$ be a monomial ideal such that $A = R/I$ is Artinian.
     The \emph{underlying graph} of $A$, denoted $G_A$, has vertex set $\{ x_i \, \colon \, x_i \not\in I \}$ and has edge $\{ x_i, x_k \}$ (possibly with $i=j$) if and only if $x_i x_j \not\in I$.
 \end{definition}
 
-\begin{theorem}{\cite[Theorem 58]{holleben_lefschetz_2024}}
+\begin{theorem}{\cite[Theorem 58]{holleben_weak_2024}}
     Let $R = \KK[x_1,\dots,x_n]$ and $I$ a monomial ideal.
     Assume $A = R/I$ is Artinian and $\dim_{\KK}{A_1} \leq \dim_{\KK}{A_2}$.
     Then either $A$ has the WLP in degree $1$ in every characteristic $\neq 2$, or $A$ fails the WLP in degree $1$ in every characteristic $\neq 2$.
@@ -1877,7 +1905,7 @@ Plenty of results are known about these algebras, so the following sections summ
     \end{enumerate}
 \end{theorem}
 
-\begin{question}{\cite[Question 61]{holleben_lefschetz_2024}}
+\begin{question}{\cite[Question 61]{holleben_weak_2024}}
     What are necessary and sufficient conditions for a squarefree monomial ideal to be the \emph{incidence ideal} of some simplicial complex?
 \end{question}
 
@@ -1887,7 +1915,7 @@ The majority of code will hosted via GitHub in Sean's \href{https://github.com/s
 
 
 \newpage
-\bibliographystyle{amsplain}
+\bibliographystyle{amsalpha}
 \bibliography{./refs}
 
 \end{document}
