@@ -22,6 +22,7 @@ hasWLP = method(
     }
 )
 hasWLP Ideal := Boolean => opts -> (I) -> (
+    if not isArtinian I then error("the quotient ring " | toString(R) | "/" | toString(I) | " must be Artinian");
     R := ring I;
     
     tryIterator := iterator(1.. opts.MaxTries);
