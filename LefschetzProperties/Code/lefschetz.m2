@@ -17,23 +17,25 @@ socleDegree QuotientRing := ZZ => (A) -> (socleDegree ideal presentation A)
 hasWLP = method(
     Options => {
         MaxTries => 10,
+        ShowProgress => true,
         LinearForm => null
     }
 )
 hasWLP Ideal := Boolean => opts -> (I) -> (
     R := ring I;
-    tryNumber := 0;
-    while tryNumber <= opts.MaxTries do (
-        tryNumber += 1;
-
+    
+    tryIterator := iterator(1.. opts.MaxTries);
+    tryIterator = if opts.ShowProgress then (
+        progressBar(iterator(1..opts.MaxTries), Description=>"Checking WLP", TotalIterations=>opts.MaxTries)
+    ) else tryIterator;
+    for throwaway in tryIterator do (
         -- Find a general linear form.
         -- If supplied, use it; 
         -- otherwise, if I is a monomial ideal, the sum of variables suffices;
         -- otherwise, take a random linear form.
         L := if opts.LinearForm =!= null then (opts.LinearForm) 
              else (if isMonomialIdeal I then (sum R_*) 
-                   else (random(R^{1}, R^1)
-                   )
+                   else (random(R^{1}, R^1))
              );
         
         -- Check if the Hilbert is as-expected.
