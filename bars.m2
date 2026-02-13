@@ -91,7 +91,7 @@ updateDisplay ProgressBar := (theBar) -> (
         (numDays, numHours) := quotientRemainder(totalHours, 24);
 
         padZeros := (someInteger) -> (
-            if someInteger > 10 then (toString someInteger)
+            if someInteger >= 10 then (toString someInteger)
             else ("0" | toString(someInteger))
         );
         dayString := if numDays > 0 then concatenate(padZeros numDays, ":") else "";
