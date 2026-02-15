@@ -2,15 +2,16 @@ import functools as ft
 import itertools as it
 import more_itertools as mit
 from typing import List, Set
-
+from itertools import combinations
 import matplotlib.pyplot as plt
+from matplotlib.collections import PolyCollection
 import networkx as nx
 import numpy as np
 from scipy.optimize import linprog
-
-
+import subprocess
+import os
+import tempfile
 from utils import smith_normal_form
-
 
 class SimplicialComplex:
     def __init__(self, faces: List[Set]):
@@ -58,6 +59,8 @@ class SimplicialComplex:
 
     @ft.cached_property
     def dim(self):
+        if not self.maximal_faces:
+            return -1
         return max(len(face) for face in self.maximal_faces) - 1
 
     @ft.cached_property
@@ -91,29 +94,36 @@ class SimplicialComplex:
         return [face[:idx] + face[idx+1:] for idx, _ in enumerate(face)]
 
     def boundary_matrix(self, k):
-        """Returns the differential mapping k-chains to (k-1)-chains."""
+        """Returns the differential mapping k-chains to (k-1)-chains with correct alternating signs."""
         k_faces = self.k_faces(k)
         k_minus_one_faces = self.k_faces(k-1)
-        boundary_faces = [self.boundary(face) for face in k_faces]
-        boundary_matrix = np.zeros((len(k_minus_one_faces), len(k_faces)))
-        for k_minus_one_face in k_minus_one_faces:
-            for idx, k_face in enumerate(k_faces):
-                boundaries = self.boundary(k_face)
-                boundary_indices = [k_minus_one_faces.index(b_face) for b_face in boundaries]
-                for i, b_idx in enumerate(boundary_indices):
-                    boundary_matrix[b_idx, idx] = 1
-        # boundary_matrix = [[(-1)**idx if face in boundary_face else 0 for idx, face in enumerate(k_minus_one_faces)] for boundary_face in boundary_faces]
-        return np.array(boundary_matrix)
+        
+        if not k_faces or not k_minus_one_faces:
+            return np.zeros((max(1, len(k_minus_one_faces)), max(1, len(k_faces))))
+            
+        matrix = np.zeros((len(k_minus_one_faces), len(k_faces)))
+        for j, k_face in enumerate(k_faces):
+            for i, _ in enumerate(k_face):
+                # k_faces are sorted, ensuring valid orientation
+                sub_face = k_face[:i] + k_face[i+1:]
+                if sub_face in k_minus_one_faces:
+                    row_idx = k_minus_one_faces.index(sub_face)
+                    matrix[row_idx, j] = (-1)**i
+                    
+        return matrix
 
     def betti(self, k: int):
-        if k == 0:
-            return self.num_components
-        elif k == self.dim:
-            return sum(1 for face in self.maximal_faces if len(face)-1 == self.dim) - np.count_nonzero(smith_normal_form(self.boundary_matrix(k)) == 1)
-        else:
-            reduced_k_matrix = smith_normal_form(self.boundary_matrix(k))
-            reduced_kplusone_matrix = smith_normal_form(self.boundary_matrix(k+1))
-            return reduced_k_matrix.shape[1] - np.count_nonzero(reduced_k_matrix == 1) - np.count_nonzero(reduced_kplusone_matrix == 1)
+        num_k_faces = len(self.k_faces(k))
+        if num_k_faces == 0:
+            return 0
+            
+        # Rank-Nullity Theorem: dim(Ker) - dim(Im)
+        rank_k = np.linalg.matrix_rank(self.boundary_matrix(k)) if k > 0 else 0
+        
+        k_plus_1_faces = self.k_faces(k+1)
+        rank_kplus1 = np.linalg.matrix_rank(self.boundary_matrix(k+1)) if k_plus_1_faces else 0
+            
+        return num_k_faces - rank_k - rank_kplus1
 
     @ft.cached_property
     def betti_numbers(self):
@@ -125,10 +135,14 @@ class SimplicialComplex:
     
     @ft.cached_property
     def f_vector(self):
+        if not self.maximal_faces:
+            return (1,)
         return (1,) + tuple(len(self.k_faces(k)) for k in range(self.dim+1))
     
     @ft.cached_property
     def h_vector(self):
+        if not self.maximal_faces:
+            return (1,)
         # Stanley's trick can be made into a triangluar array
         # https://stackoverflow.com/a/27682124
         stanleys_trick_array = np.array([0 for _ in range(sum(range(1, self.dim+4))-1)])
@@ -156,10 +170,144 @@ class SimplicialComplex:
     def is_acyclic(self):
         return not any(self.reduced_betti_numbers.values())
     
-    def draw(self, show: bool=True, **kwargs):
-        nx.draw(self.graph, pos=nx.spring_layout(self.graph), **kwargs)
+    def draw(self, show: bool = True, **kwargs):
+        # Pop custom arguments to prevent NetworkX ValueError
+        shade = kwargs.pop('shade', False)
+        shade_alpha = kwargs.pop('alpha', 0.2)  # Lower alpha looks better for overlapping faces
+        shade_color = kwargs.pop('facecolor', 'skyblue')
+        
+        # Generate layout
+        pos = nx.spring_layout(self.graph, seed=42) # Seed for reproducibility
+        
+        # Draw 1-skeleton
+        nx.draw(self.graph, pos=pos, **kwargs)
+        
+        if shade:
+            self._draw_filled_simplices(pos, shade_color, shade_alpha)
+            
         if show:
             plt.show()
+
+    def _draw_filled_simplices(self, pos, color, alpha):
+        ax = plt.gca()
+        triangles = []
+        
+        for face in self.maximal_faces:
+            if len(face) < 3:
+                continue
+                
+            # For any face of dimension >= 2, we decompose it into triangles (2-simplices)
+            # This allows us to visualize the "surface" of high-dim simplices in 2D
+            for sub_face in combinations(face, 3):
+                coords = [pos[node] for node in sub_face]
+                triangles.append(coords)
+
+        # Use zorder=0 to ensure faces are behind nodes/edges
+        poly_col = PolyCollection(
+            triangles, 
+            facecolors=color, 
+            edgecolors='none', 
+            alpha=alpha, 
+            zorder=0
+        )
+        ax.add_collection(poly_col)
+    # ----------------------------------------------------
+    # MACAULAY2 INTEGRATION (WSL) - Updated for Monomials
+    # ----------------------------------------------------
+
+    def _generate_m2_setup(self):
+        """
+        Generates the M2 code block that defines the Ring and the Complex.
+        Returns a string of M2 code.
+        """
+        # 1. Determine the range of variables needed
+        # We assume vertices are integers. We find the min and max to define the ring.
+        all_vertices = sorted(list(set().union(*self.maximal_faces)))
+        
+        if not all_vertices:
+            return 'R = QQ[x_1]; K = simplicialComplex {};'
+
+        min_v = min(all_vertices)
+        max_v = max(all_vertices)
+        
+        # 2. Define the Ring (e.g., R = ZZ/32749[x_1..x_6])
+        # We use 'QQ' (rationals) as the base field.
+        ring_def = f"R = (ZZ/32749)[x_{min_v}..x_{max_v}];"
+
+        # 3. Convert faces to monomials
+        # Python {1, 2, 5} -> M2 "x_1*x_2*x_5"
+        monomials = []
+        for face in self.maximal_faces:
+            # Sort indices to ensure x_1*x_2, not x_2*x_1
+            sorted_indices = sorted(list(face))
+            # Create the term string
+            term = "*".join([f"x_{i}" for i in sorted_indices])
+            monomials.append(term)
+        
+        monomials_str = ", ".join(monomials)
+        
+        # 4. Define the Complex
+        complex_def = f"K = simplicialComplex {{{monomials_str}}};"
+        
+        return f"{ring_def}\n{complex_def}"
+    def open_m2_interactive(self):
+            # --- PATH CONFIGURATION ---
+            # Ensure project_dir is the source of truth
+            project_dir = r"C:\Users\remem\OneDrive\Desktop\Math\Koszul-SR-Complexes-ismart"
+            
+            def to_wsl(win_path):
+                return win_path.replace("C:", "/mnt/c").replace("\\", "/")
+            
+            wsl_project_path = to_wsl(project_dir)
+            # Use the project directory for the temp file to ensure it's in the M2 'pwd'
+            temp_filename = "temp_m2_interactive.m2"
+            win_temp_path = os.path.join(project_dir, temp_filename)
+            wsl_temp_path = f"{wsl_project_path}/{temp_filename}"
+
+            # --- GENERATE M2 SCRIPT ---
+            setup_script = self._generate_m2_setup()
+            
+            # We use prefix/postfix markers to see if the script actually ran in the terminal
+            script_content = f"""
+            print "--- INITIALIZING M2 SESSION ---";
+            path = path | {{"{wsl_project_path}/"}};
+            loadPackage "SimplicialComplexes";
+            print "-- LOADED SIMPLICIAL COMPLEXES PACKAGE --";
+            load "{wsl_project_path}/LefschetzProperties.m2";
+            load "{wsl_project_path}/datacollection.m2";
+            {setup_script}
+            
+            print "--- SUCCESS: K IS DEFINED ---";
+            """
+            
+            # Write the file to the project directory explicitly
+            with open(win_temp_path, "w") as f:
+                f.write(script_content)
+
+            session_name = "M2_Session"
+            
+            # --- EXECUTION ---
+            check_session = subprocess.run(
+                ["wsl", "tmux", "has-session", "-t", session_name], 
+                capture_output=True, text=True
+            )
+
+            if check_session.returncode == 0:
+                # If session exists, we send the load command for the ABSOLUTE WSL path
+                subprocess.run(["wsl", "tmux", "send-keys", "-t", session_name, "restart", "Enter"])
+                # Give M2 a tiny moment to clear the buffer
+                subprocess.run(["wsl", "tmux", "send-keys", "-t", session_name, f'load "{wsl_temp_path}"', "Enter"])
+            else:
+                subprocess.run(["wsl", "tmux", "kill-session", "-t", session_name], capture_output=True)
+                
+                # Use absolute path for the -e load command
+                m2_start_cmd = f"M2 --no-readline -e 'load \"{wsl_temp_path}\"'"
+                
+                robust_cmd = f"trap 'tmux kill-session -t {session_name}' EXIT; tmux new-session -s {session_name} \"{m2_start_cmd}\""
+                
+                # Launch WSL and force the starting directory
+                full_command = f'cmd /c start wsl --cd "{project_dir}" bash -c "{robust_cmd}"'
+                subprocess.Popen(full_command, shell=True)
 
 
 class MultidegreeComplex(SimplicialComplex):
@@ -192,25 +340,3 @@ class StanleyReisnerComplex(SimplicialComplex):
         vertex_set = set(mit.flatten(nonfaces))
         super().__init__([vertex_set - nonface for nonface in nonfaces])
         self.nonfaces = nonfaces
-
-
-def main():
-    delta = SimplicialComplex([{1}, 
-                               {2,3}, {3,8}, {8,2}, 
-                               {4,5}, {5,8}, {8,4}, 
-                               {6,7}, {7,8}, {8,6}, 
-                               {9,10}, {10,18}, {18,17}, {17,9},
-                               {11,12}, {12,13}, {13,18}, {18,11},
-                               {14,15}, {15,16}, {16,18}, {18,14},
-                               {19,20}, {20,21}, {21,22}, {22,23}, {23,19}])
-    delta.draw()
-    # for U in it.combinations(delta.vertices, r=4):
-    #     rest_delta = delta.restriction(set(U))
-    #     # print(f'{set(U)=}')
-    #     # print(f'{rest_delta.maximal_faces=}')
-    #     print(f'{rest_delta.betti_numbers=}')
-    #     # rest_delta.draw(with_labels=True)
-
-
-if __name__ == '__main__':
-    main()

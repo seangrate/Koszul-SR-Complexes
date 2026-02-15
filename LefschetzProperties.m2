@@ -25,6 +25,7 @@ export {
     "isArtinian",
     "hasSLP",
     "hasWLP",
+    "hasWLPOptimized",
     "socleDegree",
     -- Koszul tail methods
     "hasKoszulTail",
