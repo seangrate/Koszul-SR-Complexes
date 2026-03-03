@@ -10,8 +10,60 @@ import numpy as np
 from scipy.optimize import linprog
 import subprocess
 import os
+import time
 import tempfile
 from utils import smith_normal_form
+import json
+import threading
+import subprocess
+import time
+
+class M2Controller:
+    _instance = None
+    
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def __init__(self):
+        # Invoking bash -lc ensures the WSL environment loads necessary PATH variables
+        self.process = subprocess.Popen(
+            ["wsl", "bash", "-lc", "M2 --no-readline --quiet"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+        self.initialized = False
+        self.lock = threading.Lock()
+        
+        # Allow WSL a moment to initialize and verify the process remains active
+        time.sleep(1.0)
+        if self.process.poll() is not None:
+            error_log = self.process.stderr.read()
+            print(f"CRITICAL ERROR: M2 Boot Failure. Output:\n{error_log}")
+
+    def run_script(self, script_path):
+        with self.lock:
+            if self.process.poll() is not None:
+                print("Error: The background M2 process has terminated unexpectedly.")
+                return
+
+            cmd = f'load "{script_path}"'
+            self.process.stdin.write(cmd + '\n')
+            self.process.stdin.flush()
+            
+            delimiter = "---M2_EXECUTION_COMPLETE---"
+            self.process.stdin.write(f'print "{delimiter}"\n')
+            self.process.stdin.flush()
+            
+            while True:
+                line = self.process.stdout.readline()
+                if delimiter in line or not line:
+                    break
 
 class SimplicialComplex:
     def __init__(self, faces: List[Set]):
@@ -250,65 +302,107 @@ class SimplicialComplex:
         complex_def = f"K = simplicialComplex {{{monomials_str}}};"
         
         return f"{ring_def}\n{complex_def}"
-    def open_m2_interactive(self):
-            # --- PATH CONFIGURATION ---
-            # Ensure project_dir is the source of truth
-            project_dir = r"C:\Users\remem\OneDrive\Desktop\Math\Koszul-SR-Complexes-ismart"
-            
-            def to_wsl(win_path):
-                return win_path.replace("C:", "/mnt/c").replace("\\", "/")
-            
-            wsl_project_path = to_wsl(project_dir)
-            # Use the project directory for the temp file to ensure it's in the M2 'pwd'
-            temp_filename = "temp_m2_interactive.m2"
-            win_temp_path = os.path.join(project_dir, temp_filename)
-            wsl_temp_path = f"{wsl_project_path}/{temp_filename}"
+    def open_m2_interactive(self, is_test=True):
+        project_dir = r"C:\Users\remem\OneDrive\Desktop\Math\Koszul-SR-Complexes"
+        
+        def to_wsl(win_path):
+            return win_path.replace("C:", "/mnt/c").replace("\\", "/")
+        
+        wsl_project_path = to_wsl(project_dir)
+        temp_filename = "temp_m2_interactive.m2"
+        win_temp_path = os.path.join(project_dir, temp_filename)
+        wsl_temp_path = f"{wsl_project_path}/{temp_filename}"
+        session_name = "M2_Session"
 
-            # --- GENERATE M2 SCRIPT ---
-            setup_script = self._generate_m2_setup()
-            
-            # We use prefix/postfix markers to see if the script actually ran in the terminal
-            script_content = f"""
-            print "--- INITIALIZING M2 SESSION ---";
-            path = path | {{"{wsl_project_path}/"}};
-            loadPackage "SimplicialComplexes";
-            print "-- LOADED SIMPLICIAL COMPLEXES PACKAGE --";
-            load "{wsl_project_path}/LefschetzProperties.m2";
-            load "{wsl_project_path}/datacollection.m2";
+        check_session = subprocess.run(
+            ["wsl", "tmux", "has-session", "-t", session_name], 
+            capture_output=True, text=True
+        )
+        session_exists = (check_session.returncode == 0)
+
+        init_script = f"""
+        print "--- INITIALIZING M2 SESSION ---";
+        path = path | {{"{wsl_project_path}/"}};
+        loadPackage "SimplicialComplexes";
+        print "-- LOADED SIMPLICIAL COMPLEXES PACKAGE --";
+        load "{wsl_project_path}/LefschetzProperties/Code/bars.m2";
+        load "{wsl_project_path}/LefschetzProperties/Code/hessians.m2";
+        load "{wsl_project_path}/LefschetzProperties/Code/koszulTails.m2";
+        load "{wsl_project_path}/LefschetzProperties/Code/lefschetz.m2";
+        print "-- LOADED LEFSCHETZ PROPERTIES PACKAGE --";
+        """
+
+        setup_script = self._generate_m2_setup()
+        
+        if is_test:
+            action_script = f"""
             {setup_script}
-            
             print "--- SUCCESS: K IS DEFINED ---";
+            load "{wsl_project_path}/datacollection.m2";
+            print "-- LOADED DATA COLLECTION PACKAGE --";
+            dataList = dataCollection(R, K);
+            outputText = "./data.txt";
+            outputJSON = "./data.json";
+            headers = {{"{ '", "'.join(["Name", "H-Vector", "Hilbert Series", "Hilbert Multiplicity", "Betti Table", "Is Artinian", "HasWLP", "HasSLP", "HasKoszulTail", "KoszulTails", "HasMaximalKoszulTail"]) }"}}
+            for data in dataList do (
+                apply(headers, data, (headerName, dataEntry) -> (
+                    outputText << headerName | ": " << toString(dataEntry) << endl;
+                ));
+                outputText << endl;
+            );
+            outputText << close;
+            outputJSON << toString dataList << close;
+            print "--- DATA COLLECTION COMPLETE ---";
             """
-            
-            # Write the file to the project directory explicitly
-            with open(win_temp_path, "w") as f:
-                f.write(script_content)
+        else:
+            action_script = f"""
+            {setup_script}
+            print "--- SUCCESS: K IS DEFINED ---";
+            load "{wsl_project_path}/autooverview.m2";
+            print "-- LOADED AUTO-OVERVIEW PACKAGE --";
+            dataList = autoOverview(R, K);
+            outputText = "./auto.txt";
+            outputJSON = "./auto.json";
+            headers = {{"{ '", "'.join(["Name", "H-Vector", "Hilbert Series", "Hilbert Multiplicity", "Betti Table", "Is Artinian", "HasWLP", "HasSLP", "HasKoszulTail", "KoszulTails", "HasMaximalKoszulTail"]) }"}}
+            for data in dataList do (
+                apply(headers, data, (headerName, dataEntry) -> (
+                    outputText << headerName | ": " << toString(dataEntry) << endl;
+                ));
+                outputText << endl;
+            );
+            outputText << close;
+            outputJSON << toString dataList << close;
+            print "--- DATA COLLECTION COMPLETE ---";
+            """
 
-            session_name = "M2_Session"
-            
-            # --- EXECUTION ---
-            check_session = subprocess.run(
-                ["wsl", "tmux", "has-session", "-t", session_name], 
-                capture_output=True, text=True
-            )
+        if session_exists:
+            script_content = action_script
+        else:
+            script_content = init_script + action_script
 
-            if check_session.returncode == 0:
-                # If session exists, we send the load command for the ABSOLUTE WSL path
-                subprocess.run(["wsl", "tmux", "send-keys", "-t", session_name, "restart", "Enter"])
-                # Give M2 a tiny moment to clear the buffer
+        script_content = script_content.replace('\r\n', '\n')
+        
+        with open(win_temp_path, "w", newline='\n') as f:
+            f.write(script_content)
+
+        def run_tmux_task():
+            if session_exists:
                 subprocess.run(["wsl", "tmux", "send-keys", "-t", session_name, f'load "{wsl_temp_path}"', "Enter"])
             else:
                 subprocess.run(["wsl", "tmux", "kill-session", "-t", session_name], capture_output=True)
                 
-                # Use absolute path for the -e load command
-                m2_start_cmd = f"M2 --no-readline -e 'load \"{wsl_temp_path}\"'"
-                
-                robust_cmd = f"trap 'tmux kill-session -t {session_name}' EXIT; tmux new-session -s {session_name} \"{m2_start_cmd}\""
-                
-                # Launch WSL and force the starting directory
+                robust_cmd = f"trap 'tmux kill-session -t {session_name}' EXIT; tmux new-session -s {session_name} M2"
                 full_command = f'cmd /c start wsl --cd "{project_dir}" bash -c "{robust_cmd}"'
+                
                 subprocess.Popen(full_command, shell=True)
+                
+                # A sleep is solely required here to let the cold-boot environment settle
+                time.sleep(3.0)
+                subprocess.run(["wsl", "tmux", "send-keys", "-t", session_name, f'load "{wsl_temp_path}"', "Enter"])
 
+        # Dispatch the terminal commands to a background thread to prevent UI freezing
+        import threading
+        threading.Thread(target=run_tmux_task, daemon=True).start()
 
 class MultidegreeComplex(SimplicialComplex):
     def __init__(self, multidegree: np.ndarray, semigroup_generators: np.ndarray):

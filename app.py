@@ -6,18 +6,19 @@ import matplotlib.path as mpath
 
 from bokeh.plotting import figure, curdoc
 from bokeh.models import ColumnDataSource, Div, Button, PreText
-from bokeh.events import Tap
+from bokeh.events import Tap, DoubleTap
 from bokeh.layouts import row, column
 
 from simplicial import SimplicialComplex
 
-# --- State Management ---
+import re
+import os
+
 node_coords = {}
 maximal_faces = []
 selected_nodes = set()
 sc_instance = SimplicialComplex([])
 
-# --- Data Sources ---
 source_nodes = ColumnDataSource(data=dict(x=[], y=[], id=[], color=[]))
 source_edges = ColumnDataSource(data=dict(xs=[], ys=[], face_tuple=[]))
 source_faces = ColumnDataSource(data=dict(xs=[], ys=[], fill_color=[], face_tuple=[]))
@@ -31,7 +32,6 @@ def update_complex():
     global sc_instance, maximal_faces
     sc_instance = SimplicialComplex(maximal_faces)
     
-    # 1. Update Nodes
     colors = ["red" if nid in selected_nodes else "navy" for nid in node_coords.keys()]
     source_nodes.data = dict(
         x=[coords[0] for coords in node_coords.values()],
@@ -40,7 +40,6 @@ def update_complex():
         color=colors
     )
 
-    # 2. Update Faces (k >= 2) - Iterate UPWARDS so higher dims draw ON TOP
     face_xs, face_ys, face_colors, face_tuples = [], [], [], []
     color_map = {2: "red", 3: "orange", 4: "yellow", 5: "green", 6: "blue"}
 
@@ -56,10 +55,11 @@ def update_complex():
                 face_tuples.append(tuple(sorted(face)))
             except QhullError:
                 pass
+    
+    auto_complex()
 
     source_faces.data = dict(xs=face_xs, ys=face_ys, fill_color=face_colors, face_tuple=face_tuples)
 
-    # 3. Update Edges (1-simplices)
     edge_xs, edge_ys, edge_tuples = [], [], []
     for e in sc_instance.k_faces(1):
         edge_xs.append([node_coords[e[0]][0], node_coords[e[1]][0]])
@@ -68,11 +68,12 @@ def update_complex():
     
     source_edges.data = dict(xs=edge_xs, ys=edge_ys, face_tuple=edge_tuples)
 
-    # 4. Update Stats
     if maximal_faces:
-        stats_text = f"<b>Dimension:</b> {sc_instance.dim}<br>"
-        stats_text += f"<b>f-vector:</b> {sc_instance.f_vector}<br>"
-        stats_text += f"<b>Betti Numbers:</b> {sc_instance.betti_numbers}<br>"
+        stats_text = f"<b>Maximal Faces:</b> {maximal_faces}<br>"
+        stats_text += f"<b>Dimension:</b> {sc_instance.dim}<br>"
+        stats_text += f"<b>F-vector:</b> {sc_instance.f_vector}<br>"
+        stats_text += f"<b>H-vector:</b> {sc_instance.h_vector}<br>"
+        stats_text += f"<b>Is Acyclic:</b> {sc_instance.is_acyclic}<br>"
     else:
         stats_text = "<b>Complex is empty.</b>"
     stats_div.text = stats_text
@@ -80,7 +81,6 @@ def update_complex():
 def on_tap(event):
     px, py = event.x, event.y
     
-    # Hierarchy 1: Check Nodes (Select/Deselect)
     for nid, coords in node_coords.items():
         if dist((px, py), coords) < 0.5:
             if nid in selected_nodes:
@@ -90,7 +90,6 @@ def on_tap(event):
             update_complex()
             return
 
-    # Hierarchy 2: Check Edges (Delete)
     for idx, e_tuple in enumerate(source_edges.data['face_tuple']):
         v = (source_edges.data['xs'][idx][0], source_edges.data['ys'][idx][0])
         w = (source_edges.data['xs'][idx][1], source_edges.data['ys'][idx][1])
@@ -99,8 +98,6 @@ def on_tap(event):
             update_complex()
             return
             
-    # Hierarchy 3: Check Faces (Delete)
-    # Iterate backwards through drawn faces so we click the top-most (highest dimension) first
     for idx in range(len(source_faces.data['face_tuple'])-1, -1, -1):
         f_tuple = source_faces.data['face_tuple'][idx]
         poly_path = mpath.Path(np.column_stack((source_faces.data['xs'][idx], source_faces.data['ys'][idx])))
@@ -109,13 +106,33 @@ def on_tap(event):
             update_complex()
             return
 
-    # Hierarchy 4: Empty Canvas (Create Node)
     new_id = max(node_coords.keys(), default=-1) + 1
     node_coords[new_id] = (px, py)
     maximal_faces.append({new_id})
     update_complex()
 
-# --- Hit Detection Math ---
+def on_double_tap(event):
+    px, py = event.x, event.y
+    
+    for nid, coords in list(node_coords.items()):
+        if dist((px, py), coords) < 0.5:
+            # 1. Strip from the mathematical complex
+            perform_cascading_delete((nid,))
+            
+            # 2. Purge from graphical memory and selection state
+            del node_coords[nid]
+            if nid in selected_nodes:
+                selected_nodes.remove(nid)
+                
+            update_complex()
+            return
+
+def test_complex():
+    sc_instance.open_m2_interactive()
+
+def auto_complex():
+    sc_instance.open_m2_interactive(is_test=False)
+
 def dist(p1, p2):
     return np.sqrt((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2)
 
@@ -133,7 +150,6 @@ def perform_cascading_delete(target_simplex):
     
     for face in maximal_faces:
         if target_set.issubset(face):
-            # Replace face with its boundaries that lack the target elements
             for v in target_set:
                 sub_face = set(face) - {v}
                 if sub_face:
@@ -151,6 +167,103 @@ def create_simplex_action():
         selected_nodes.clear()
         update_complex()
 
+def load_and_format_data(filepath="data.txt"):
+    if not os.path.exists(filepath):
+        return "<b>No data file found.</b>"
+        
+    with open(filepath, 'r') as f:
+        content = f.read()
+        
+    # Split the document by double newlines to isolate each complex's data block
+    blocks = content.strip().split('\n\n')
+    html_output = "<div style='font-family: monospace;'>"
+    
+    for block in blocks:
+        lines = block.split('\n')
+        html_output += "<div style='margin-bottom: 25px; padding-bottom: 15px; border-bottom: 1px solid #ccc;'>"
+        
+        for line in lines:
+            if not line.strip() or ": " not in line:
+                continue
+                
+            key, val = line.split(": ", 1)
+            
+            if "Betti Table" in key:
+                html_output += f"<b>{key}:</b><br>"
+                html_output += format_betti_table(val)
+            else:
+                html_output += f"<b>{key}:</b> {val}<br>"
+                
+        html_output += "</div>"
+    html_output += "</div>"
+    
+    return html_output
+
+def format_betti_table(betti_str):
+    # Extract tuples: (i, {j}, k) => v
+    pattern = r"\((\d+),\{(\d+)\},\d+\)\s*=>\s*(\d+)"
+    matches = re.findall(pattern, betti_str)
+    
+    if not matches:
+        return "<i style='color: gray;'>Empty or unparseable Betti table</i><br>"
+        
+    data = [(int(i), int(j), int(v)) for i, j, v in matches]
+    max_i = max(d[0] for d in data)
+    
+    # Structure rows by j - i to match standard algebraic conventions
+    rows = {}
+    for i, j, v in data:
+        row_idx = j - i
+        if row_idx not in rows:
+            rows[row_idx] = {}
+        rows[row_idx][i] = v
+        
+    min_row = min(rows.keys())
+    max_row = max(rows.keys())
+    
+    # Construct the HTML table
+    table_html = "<table style='border-collapse: collapse; margin-top: 8px; margin-bottom: 12px; text-align: center; font-size: 14px;'>"
+    
+    # Header row (homological degrees)
+    table_html += "<tr><th style='border-right: 1px solid black; padding: 2px 8px;'></th>"
+    for col in range(max_i + 1):
+        table_html += f"<th style='padding: 2px 8px;'>{col}</th>"
+    table_html += "</tr>"
+    
+    # Underline beneath header
+    table_html += f"<tr><td colspan='{max_i + 2}' style='border-top: 1px solid black; height: 4px;'></td></tr>"
+    
+    # Data rows
+    for r in range(min_row, max_row + 1):
+        table_html += f"<tr><td style='border-right: 1px solid black; padding: 2px 8px;'><b>{r}</b></td>"
+        for col in range(max_i + 1):
+            val = rows.get(r, {}).get(col, "-")
+            table_html += f"<td style='padding: 2px 8px;'>{val}</td>"
+        table_html += "</tr>"
+        
+    table_html += "</table>"
+    return table_html
+
+last_mtime_data = 0
+last_mtime_auto = 0
+
+def watch_data_files():
+    global last_mtime_data, last_mtime_auto
+    
+    filepath = "data.txt"
+    if os.path.exists(filepath):
+        current_mtime = os.path.getmtime(filepath)
+        if current_mtime > last_mtime_data:
+            last_mtime_data = current_mtime
+            data_display_div.text = load_and_format_data(filepath)
+            
+    autofilepath = "auto.txt"
+    if os.path.exists(autofilepath):
+        current_mtime = os.path.getmtime(autofilepath)
+        if current_mtime > last_mtime_auto:
+            last_mtime_auto = current_mtime
+            auto_display_div.text = load_and_format_data(autofilepath)
+
 def export_action():
     if not maximal_faces:
         export_out.text = "No complex to export."
@@ -160,10 +273,7 @@ def export_action():
     export_str = f"my_complex = SimplicialComplex([{faces_str}])"
     export_out.text = export_str
     print(f"\n--- EXPORT ---\n{export_str}\n--------------\n")
-
-# --- UI Layout ---
-# --- Figure Setup ---
-# Use explicit ranges or let them auto-adjust
+    
 p = figure(
     title="Simplicial Complex GUI (Double-Click to Delete)", 
     tools="pan,wheel_zoom,reset", 
@@ -174,8 +284,6 @@ p = figure(
     y_range=(-10, 10)
 )
 
-# 1. Add Renderers in specific order: Faces -> Edges -> Nodes
-# This ensures lines are on top of faces, and dots are on top of lines.
 face_renderer = p.patches('xs', 'ys', source=source_faces, 
                          fill_color='fill_color', fill_alpha=0.6, line_color=None)
 edge_renderer = p.multi_line('xs', 'ys', source=source_edges, 
@@ -183,41 +291,62 @@ edge_renderer = p.multi_line('xs', 'ys', source=source_edges,
 node_renderer = p.circle('x', 'y', size=15, source=source_nodes, 
                         color='color', alpha=0.9, line_color="white", line_width=2)
 
-# 2. Force Nodes to the front
 node_renderer.level = 'overlay' 
 
-# 3. Update the update_complex logic for 1-simplices
-# In your class, k_faces(1) returns the edges.
-# Ensure the color_map includes higher dimensions
 color_map = {
     1: "black",
     2: "red", 
     3: "orange", 
     4: "yellow", 
     5: "green", 
-    6: "blue"
+    6: "blue",
+    7: "purple",
+    8: "pink" # Maybe more later? If we want to do higher dimensions
 }
 
-# Renderers
 p.patches('xs', 'ys', source=source_faces, fill_color='fill_color', fill_alpha=0.6, line_color=None)
 p.multi_line('xs', 'ys', source=source_edges, line_color="black", line_width=2, line_alpha=0.8)
 p.circle('x', 'y', size=15, source=source_nodes, color='color', alpha=0.9)
 
-# Events
 p.on_event(Tap, on_tap)
+p.on_event(DoubleTap, on_double_tap)
 
-# Side Panel
-stats_div = Div(text="<b>Complex is empty.</b>", width=300, height=150)
+stats_div = Div(text="<b>Complex is empty.</b>", width=300, height=100)
 btn_create = Button(label="Form Simplex from Selection", button_type="success", width=300)
 btn_create.on_click(create_simplex_action)
+
+btn_test = Button(label="Run Test Script", button_type="danger", width=300)
+btn_test.on_click(test_complex)
+
+# --- NEW DATA DISPLAY DIV ---
+parsed_html_data = load_and_format_data("data.txt")
+data_display_div = Div(
+    text=parsed_html_data, 
+    width=300, 
+    height=300, 
+    styles={'overflow-y': 'auto', 'background-color': '#f9f9f9', 'padding': '10px', 'border': '1px solid #ddd'}
+)
+# ----------------------------
+
+# --- AUTOMATIC OVERVIEW ---
+auto_parsed_html_data = load_and_format_data("auto.txt")
+auto_display_div = Div(
+    text=auto_parsed_html_data, 
+    width=300, 
+    height=300, 
+    styles={'overflow-y': 'auto', 'background-color': '#f9f9f9', 'padding': '10px', 'border': '1px solid #ddd'}
+)
+# ----------------------------
 
 btn_export = Button(label="Export to Python", button_type="primary", width=300)
 btn_export.on_click(export_action)
 export_out = PreText(text="", width=300, height=100)
 
-side_panel = column(btn_create, stats_div, btn_export, export_out)
+# Inject the Div into the column layout
+side_panel = column(btn_create, stats_div, auto_display_div, btn_test, data_display_div, btn_export, export_out)
 layout = row(p, side_panel)
 
 update_complex()
 curdoc().add_root(layout)
 curdoc().title = "Simplicial Complex GUI"
+curdoc().add_periodic_callback(watch_data_files, 1000)
