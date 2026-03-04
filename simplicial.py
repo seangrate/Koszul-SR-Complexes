@@ -17,6 +17,10 @@ import json
 import threading
 import subprocess
 import time
+import uuid
+
+# Define this lock globally, outside of any class, near your imports
+m2_execution_lock = threading.Lock()
 
 class M2Controller:
     _instance = None
@@ -266,14 +270,8 @@ class SimplicialComplex:
     # ----------------------------------------------------
     # MACAULAY2 INTEGRATION (WSL) - Updated for Monomials
     # ----------------------------------------------------
-
     def _generate_m2_setup(self):
-        """
-        Generates the M2 code block that defines the Ring and the Complex.
-        Returns a string of M2 code.
-        """
-        # 1. Determine the range of variables needed
-        # We assume vertices are integers. We find the min and max to define the ring.
+        """Generates M2 code for the Ring and Complex without redundant package calls."""
         all_vertices = sorted(list(set().union(*self.maximal_faces)))
         
         if not all_vertices:
@@ -282,26 +280,21 @@ class SimplicialComplex:
         min_v = min(all_vertices)
         max_v = max(all_vertices)
         
-        # 2. Define the Ring (e.g., R = ZZ/32749[x_1..x_6])
-        # We use 'QQ' (rationals) as the base field.
+        # Define the Ring first
         ring_def = f"R = (ZZ/32749)[x_{min_v}..x_{max_v}];"
 
-        # 3. Convert faces to monomials
-        # Python {1, 2, 5} -> M2 "x_1*x_2*x_5"
+        # Define faces
         monomials = []
         for face in self.maximal_faces:
-            # Sort indices to ensure x_1*x_2, not x_2*x_1
             sorted_indices = sorted(list(face))
-            # Create the term string
             term = "*".join([f"x_{i}" for i in sorted_indices])
             monomials.append(term)
         
         monomials_str = ", ".join(monomials)
-        
-        # 4. Define the Complex
         complex_def = f"K = simplicialComplex {{{monomials_str}}};"
         
         return f"{ring_def}\n{complex_def}"
+
     def open_m2_interactive(self, is_test=True):
         project_dir = r"C:\Users\remem\OneDrive\Desktop\Math\Koszul-SR-Complexes"
         
@@ -309,7 +302,10 @@ class SimplicialComplex:
             return win_path.replace("C:", "/mnt/c").replace("\\", "/")
         
         wsl_project_path = to_wsl(project_dir)
-        temp_filename = "temp_m2_interactive.m2"
+        
+        # Generate a unique file name to prevent I/O race conditions
+        unique_id = uuid.uuid4().hex[:8]
+        temp_filename = f"temp_m2_interactive_{unique_id}.m2"
         win_temp_path = os.path.join(project_dir, temp_filename)
         wsl_temp_path = f"{wsl_project_path}/{temp_filename}"
         session_name = "M2_Session"
@@ -320,10 +316,13 @@ class SimplicialComplex:
         )
         session_exists = (check_session.returncode == 0)
 
+        # Inside open_m2_interactive
+        # Inside open_m2_interactive
         init_script = f"""
         print "--- INITIALIZING M2 SESSION ---";
         path = path | {{"{wsl_project_path}/"}};
-        loadPackage "SimplicialComplexes";
+        -- needsPackage is safer for persistent sessions than loadPackage
+        needsPackage "SimplicialComplexes";
         print "-- LOADED SIMPLICIAL COMPLEXES PACKAGE --";
         load "{wsl_project_path}/LefschetzProperties/Code/bars.m2";
         load "{wsl_project_path}/LefschetzProperties/Code/hessians.m2";
@@ -334,16 +333,37 @@ class SimplicialComplex:
 
         setup_script = self._generate_m2_setup()
         
-        if is_test:
-            action_script = f"""
-            {setup_script}
-            print "--- SUCCESS: K IS DEFINED ---";
-            load "{wsl_project_path}/datacollection.m2";
-            print "-- LOADED DATA COLLECTION PACKAGE --";
-            dataList = dataCollection(R, K);
-            outputText = "./data.txt";
-            outputJSON = "./data.json";
-            headers = {{"{ '", "'.join(["Name", "H-Vector", "Hilbert Series", "Hilbert Multiplicity", "Betti Table", "Is Artinian", "HasWLP", "HasSLP", "HasKoszulTail", "KoszulTails", "HasMaximalKoszulTail"]) }"}}
+        # Dynamically map the target files and routines based on test state
+        target_txt = "./data.txt" if is_test else "./auto.txt"
+        target_json = "./data.json" if is_test else "./auto.json"
+        script_to_load = "datacollection.m2" if is_test else "autooverview.m2"
+        routine_name = "dataCollection" if is_test else "autoOverview"
+
+        action_script = f"""
+        {setup_script}
+        print "--- SUCCESS: K IS DEFINED ---";
+        if ideal K == 0 then (
+            print "--- ZERO IDEAL DETECTED: BYPASSING REGULAR COMPUTATION ---";
+            outTxt = "{target_txt}";
+            outTxt << "Name: n-Simplex" << endl;
+            outTxt << "H-Vector: {{1}}" << endl;
+            outTxt << "Hilbert Series: 1" << endl;
+            outTxt << "Hilbert Multiplicity: 1" << endl;
+            outTxt << "Betti Table: (0,{{0}},0) => 1" << endl;
+            outTxt << "Is Artinian: false" << endl;
+            outTxt << "HasWLP: true" << endl;
+            outTxt << "HasSLP: true" << endl;
+            outTxt << "HasKoszulTail: false" << endl;
+            outTxt << "KoszulTails: {{}}" << endl;
+            outTxt << "HasMaximalKoszulTail: false" << endl;
+            outTxt << close;
+        ) else (
+            load "{wsl_project_path}/{script_to_load}";
+            print "-- LOADED COMPUTATION PACKAGE --";
+            dataList = {routine_name}(R, K);
+            outputText = "{target_txt}";
+            outputJSON = "{target_json}";
+            headers = {{"{ '", "'.join(["Name", "H-Vector", "Hilbert Series", "Hilbert Multiplicity", "Betti Table", "Is Artinian", "HasWLP", "HasSLP", "HasKoszulTail", "KoszulTails", "HasMaximalKoszulTail"]) }"}};
             for data in dataList do (
                 apply(headers, data, (headerName, dataEntry) -> (
                     outputText << headerName | ": " << toString(dataEntry) << endl;
@@ -353,27 +373,8 @@ class SimplicialComplex:
             outputText << close;
             outputJSON << toString dataList << close;
             print "--- DATA COLLECTION COMPLETE ---";
-            """
-        else:
-            action_script = f"""
-            {setup_script}
-            print "--- SUCCESS: K IS DEFINED ---";
-            load "{wsl_project_path}/autooverview.m2";
-            print "-- LOADED AUTO-OVERVIEW PACKAGE --";
-            dataList = autoOverview(R, K);
-            outputText = "./auto.txt";
-            outputJSON = "./auto.json";
-            headers = {{"{ '", "'.join(["Name", "H-Vector", "Hilbert Series", "Hilbert Multiplicity", "Betti Table", "Is Artinian", "HasWLP", "HasSLP", "HasKoszulTail", "KoszulTails", "HasMaximalKoszulTail"]) }"}}
-            for data in dataList do (
-                apply(headers, data, (headerName, dataEntry) -> (
-                    outputText << headerName | ": " << toString(dataEntry) << endl;
-                ));
-                outputText << endl;
-            );
-            outputText << close;
-            outputJSON << toString dataList << close;
-            print "--- DATA COLLECTION COMPLETE ---";
-            """
+        )
+        """
 
         if session_exists:
             script_content = action_script
@@ -386,24 +387,42 @@ class SimplicialComplex:
             f.write(script_content)
 
         def run_tmux_task():
-            if session_exists:
-                subprocess.run(["wsl", "tmux", "send-keys", "-t", session_name, f'load "{wsl_temp_path}"', "Enter"])
-            else:
-                subprocess.run(["wsl", "tmux", "kill-session", "-t", session_name], capture_output=True)
+            # Non-blocking lock: if true, a computation is already queuing/running.
+            # We silently drop this redundant call to prevent tmux overload.
+            if not m2_execution_lock.acquire(blocking=False):
+                os.remove(win_temp_path)
+                return
                 
-                robust_cmd = f"trap 'tmux kill-session -t {session_name}' EXIT; tmux new-session -s {session_name} M2"
-                full_command = f'cmd /c start wsl --cd "{project_dir}" bash -c "{robust_cmd}"'
+            try:
+                if session_exists:
+                    subprocess.run(["wsl", "tmux", "send-keys", "-t", session_name, f'load "{wsl_temp_path}"', "Enter"])
+                else:
+                    subprocess.run(["wsl", "tmux", "kill-session", "-t", session_name], capture_output=True)
+                    
+                    robust_cmd = f"trap 'tmux kill-session -t {session_name}' EXIT; tmux new-session -s {session_name} M2"
+                    full_command = f'cmd /c start wsl --cd "{project_dir}" bash -c "{robust_cmd}"'
+                    
+                    subprocess.Popen(full_command, shell=True)
+                    time.sleep(3.0)
+                    subprocess.run(["wsl", "tmux", "send-keys", "-t", session_name, f'load "{wsl_temp_path}"', "Enter"])
                 
-                subprocess.Popen(full_command, shell=True)
-                
-                # A sleep is solely required here to let the cold-boot environment settle
-                time.sleep(3.0)
-                subprocess.run(["wsl", "tmux", "send-keys", "-t", session_name, f'load "{wsl_temp_path}"', "Enter"])
+                # Yield a brief moment to ensure tmux ingests the keystrokes before unlocking
+                time.sleep(1.0)
+            finally:
+                # Cleanup the unique temporary file and release the lock for the next interaction
+                time.sleep(2.0) 
+                if os.path.exists(win_temp_path):
+                    os.remove(win_temp_path)
+                m2_execution_lock.release()
 
-        # Dispatch the terminal commands to a background thread to prevent UI freezing
         import threading
         threading.Thread(target=run_tmux_task, daemon=True).start()
-
+    def reset_m2_session(self):
+        """Kills the existing tmux session to force a cold-boot of M2."""
+        session_name = "M2_Session"
+        # Kill the session; ignore errors if it doesn't exist
+        subprocess.run(["wsl", "tmux", "kill-session", "-t", session_name], capture_output=True)
+        print("--- M2 SESSION TERMINATED: CLEAN REBOOT SCHEDULED ---")
 class MultidegreeComplex(SimplicialComplex):
     def __init__(self, multidegree: np.ndarray, semigroup_generators: np.ndarray):
         super().__init__(self._compute_max_faces(multidegree, semigroup_generators))

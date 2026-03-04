@@ -342,8 +342,26 @@ btn_export = Button(label="Export to Python", button_type="primary", width=300)
 btn_export.on_click(export_action)
 export_out = PreText(text="", width=300, height=100)
 
-# Inject the Div into the column layout
-side_panel = column(btn_create, stats_div, auto_display_div, btn_test, data_display_div, btn_export, export_out)
+# Define the reset action
+def reset_action():
+    sc_instance.reset_m2_session()
+    export_out.text = "M2 Session Reset. Next run will be a cold-boot."
+
+# Create the button
+btn_reset = Button(label="Hard Reset M2 Session", button_type="warning", width=300)
+btn_reset.on_click(reset_action)
+
+# Update your side_panel layout to include the new button
+side_panel = column(
+    btn_create, 
+    stats_div, 
+    auto_display_div, 
+    btn_test, 
+    data_display_div, 
+    btn_export, 
+    btn_reset, # Added here
+    export_out
+)
 layout = row(p, side_panel)
 
 update_complex()
