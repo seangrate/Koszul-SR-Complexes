@@ -25,6 +25,7 @@ export {
     "isArtinian",
     "hasSLP",
     "hasWLP",
+    "hasWLPOptimized",
     "socleDegree",
     -- Koszul tail methods
     "hasKoszulTail",
@@ -34,15 +35,21 @@ export {
     -- optional arguments and symbols
     "LinearForm",
     "MaxTries",
-    "Maximal"
+    "Maximal",
+    "ShowProgress",
+    "progressBar",
+    "TotalIterations",
+    "BarCharacter"
 }
 
 -----------------------------------------------------------------------------
 -- **CODE** --
 -----------------------------------------------------------------------------
+load "./LefschetzProperties/Code/bars.m2"
 load "./LefschetzProperties/Code/lefschetz.m2"
 load "./LefschetzProperties/Code/koszulTails.m2"
 load "./LefschetzProperties/Code/hessians.m2"
+
 
 -----------------------------------------------------------------------------
 -- **DOCUMENTATION** --
