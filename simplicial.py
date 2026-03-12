@@ -1,16 +1,30 @@
+import os
+import time
+import tempfile
+import json
+import threading
+import subprocess
+import time
+import uuid
+
 import functools as ft
 import itertools as it
 import more_itertools as mit
 from typing import List, Set
-
-import matplotlib.pyplot as plt
-import networkx as nx
+from itertools import combinations
 import numpy as np
 from scipy.optimize import linprog
 
+import matplotlib.pyplot as plt
+from matplotlib.collections import PolyCollection
+import networkx as nx
 
+from m2controller import M2Controller
 from utils import smith_normal_form
 
+
+# Define this lock globally, outside of any class, near your imports
+m2_execution_lock = threading.Lock()
 
 class SimplicialComplex:
     def __init__(self, faces: List[Set]):
@@ -58,6 +72,8 @@ class SimplicialComplex:
 
     @ft.cached_property
     def dim(self):
+        if not self.maximal_faces:
+            return -1
         return max(len(face) for face in self.maximal_faces) - 1
 
     @ft.cached_property
@@ -91,29 +107,36 @@ class SimplicialComplex:
         return [face[:idx] + face[idx+1:] for idx, _ in enumerate(face)]
 
     def boundary_matrix(self, k):
-        """Returns the differential mapping k-chains to (k-1)-chains."""
+        """Returns the differential mapping k-chains to (k-1)-chains with correct alternating signs."""
         k_faces = self.k_faces(k)
         k_minus_one_faces = self.k_faces(k-1)
-        boundary_faces = [self.boundary(face) for face in k_faces]
-        boundary_matrix = np.zeros((len(k_minus_one_faces), len(k_faces)))
-        for k_minus_one_face in k_minus_one_faces:
-            for idx, k_face in enumerate(k_faces):
-                boundaries = self.boundary(k_face)
-                boundary_indices = [k_minus_one_faces.index(b_face) for b_face in boundaries]
-                for i, b_idx in enumerate(boundary_indices):
-                    boundary_matrix[b_idx, idx] = 1
-        # boundary_matrix = [[(-1)**idx if face in boundary_face else 0 for idx, face in enumerate(k_minus_one_faces)] for boundary_face in boundary_faces]
-        return np.array(boundary_matrix)
+        
+        if not k_faces or not k_minus_one_faces:
+            return np.zeros((max(1, len(k_minus_one_faces)), max(1, len(k_faces))))
+            
+        matrix = np.zeros((len(k_minus_one_faces), len(k_faces)))
+        for j, k_face in enumerate(k_faces):
+            for i, _ in enumerate(k_face):
+                # k_faces are sorted, ensuring valid orientation
+                sub_face = k_face[:i] + k_face[i+1:]
+                if sub_face in k_minus_one_faces:
+                    row_idx = k_minus_one_faces.index(sub_face)
+                    matrix[row_idx, j] = (-1)**i
+                    
+        return matrix
 
     def betti(self, k: int):
-        if k == 0:
-            return self.num_components
-        elif k == self.dim:
-            return sum(1 for face in self.maximal_faces if len(face)-1 == self.dim) - np.count_nonzero(smith_normal_form(self.boundary_matrix(k)) == 1)
-        else:
-            reduced_k_matrix = smith_normal_form(self.boundary_matrix(k))
-            reduced_kplusone_matrix = smith_normal_form(self.boundary_matrix(k+1))
-            return reduced_k_matrix.shape[1] - np.count_nonzero(reduced_k_matrix == 1) - np.count_nonzero(reduced_kplusone_matrix == 1)
+        num_k_faces = len(self.k_faces(k))
+        if num_k_faces == 0:
+            return 0
+            
+        # Rank-Nullity Theorem: dim(Ker) - dim(Im)
+        rank_k = np.linalg.matrix_rank(self.boundary_matrix(k)) if k > 0 else 0
+        
+        k_plus_1_faces = self.k_faces(k+1)
+        rank_kplus1 = np.linalg.matrix_rank(self.boundary_matrix(k+1)) if k_plus_1_faces else 0
+            
+        return num_k_faces - rank_k - rank_kplus1
 
     @ft.cached_property
     def betti_numbers(self):
@@ -125,10 +148,14 @@ class SimplicialComplex:
     
     @ft.cached_property
     def f_vector(self):
+        if not self.maximal_faces:
+            return (1,)
         return (1,) + tuple(len(self.k_faces(k)) for k in range(self.dim+1))
     
     @ft.cached_property
     def h_vector(self):
+        if not self.maximal_faces:
+            return (1,)
         # Stanley's trick can be made into a triangluar array
         # https://stackoverflow.com/a/27682124
         stanleys_trick_array = np.array([0 for _ in range(sum(range(1, self.dim+4))-1)])
@@ -156,12 +183,190 @@ class SimplicialComplex:
     def is_acyclic(self):
         return not any(self.reduced_betti_numbers.values())
     
-    def draw(self, show: bool=True, **kwargs):
-        nx.draw(self.graph, pos=nx.spring_layout(self.graph), **kwargs)
+    def draw(self, show: bool = True, **kwargs):
+        # Pop custom arguments to prevent NetworkX ValueError
+        shade = kwargs.pop('shade', False)
+        shade_alpha = kwargs.pop('alpha', 0.2)  # Lower alpha looks better for overlapping faces
+        shade_color = kwargs.pop('facecolor', 'skyblue')
+        
+        # Generate layout
+        pos = nx.spring_layout(self.graph, seed=42) # Seed for reproducibility
+        
+        # Draw 1-skeleton
+        nx.draw(self.graph, pos=pos, **kwargs)
+        
+        if shade:
+            self._draw_filled_simplices(pos, shade_color, shade_alpha)
+            
         if show:
             plt.show()
 
+    def _draw_filled_simplices(self, pos, color, alpha):
+        ax = plt.gca()
+        triangles = []
+        
+        for face in self.maximal_faces:
+            if len(face) < 3:
+                continue
+                
+            # For any face of dimension >= 2, we decompose it into triangles (2-simplices)
+            # This allows us to visualize the "surface" of high-dim simplices in 2D
+            for sub_face in combinations(face, 3):
+                coords = [pos[node] for node in sub_face]
+                triangles.append(coords)
 
+        # Use zorder=0 to ensure faces are behind nodes/edges
+        poly_col = PolyCollection(
+            triangles, 
+            facecolors=color, 
+            edgecolors='none', 
+            alpha=alpha, 
+            zorder=0
+        )
+        ax.add_collection(poly_col)
+    # ----------------------------------------------------
+    # MACAULAY2 INTEGRATION (WSL) - Updated for Monomials
+    # ----------------------------------------------------
+    def _generate_m2_setup(self):
+        """Generates M2 code for the Ring and Complex without redundant package calls."""
+        all_vertices = sorted(list(set().union(*self.maximal_faces)))
+        
+        if not all_vertices:
+            return 'R = QQ[x_1]; K = simplicialComplex {};'
+
+        min_v = min(all_vertices)
+        max_v = max(all_vertices)
+        
+        # Define the Ring first
+        ring_def = f"R = (ZZ/32749)[x_{min_v}..x_{max_v}];"
+
+        # Define faces
+        monomials = []
+        for face in self.maximal_faces:
+            sorted_indices = sorted(list(face))
+            term = "*".join([f"x_{i}" for i in sorted_indices])
+            monomials.append(term)
+        
+        monomials_str = ", ".join(monomials)
+        complex_def = f"K = simplicialComplex {{{monomials_str}}};"
+        
+        return f"{ring_def}\n{complex_def}"
+
+    def open_m2_interactive(self, is_test=True):
+        project_dir = r"C:\Users\remem\OneDrive\Desktop\Math\Koszul-SR-Complexes"
+        
+        def to_wsl(win_path):
+            return win_path.replace("C:", "/mnt/c").replace("\\", "/")
+        
+        wsl_project_path = to_wsl(project_dir)
+        unique_id = uuid.uuid4().hex[:8]
+        temp_filename = f"temp_m2_interactive_{unique_id}.m2"
+        win_temp_path = os.path.join(project_dir, temp_filename)
+        wsl_temp_path = f"{wsl_project_path}/{temp_filename}"
+        session_name = "M2_Session"
+
+        check_session = subprocess.run(
+            ["wsl", "tmux", "has-session", "-t", session_name], 
+            capture_output=True, text=True
+        )
+        session_exists = (check_session.returncode == 0)
+
+        init_script = f"""
+        print "--- INITIALIZING M2 SESSION ---";
+        path = path | {{"{wsl_project_path}/"}};
+        needsPackage "SimplicialComplexes";
+        print "-- LOADED SIMPLICIAL COMPLEXES PACKAGE --";
+        load "{wsl_project_path}/LefschetzProperties/Code/bars.m2";
+        load "{wsl_project_path}/LefschetzProperties/Code/hessians.m2";
+        load "{wsl_project_path}/LefschetzProperties/Code/koszulTails.m2";
+        load "{wsl_project_path}/LefschetzProperties/Code/lefschetz.m2";
+        print "-- LOADED LEFSCHETZ PROPERTIES PACKAGE --";
+        """
+
+        setup_script = self._generate_m2_setup()
+        
+        target_txt = "./data.txt" if is_test else "./auto.txt"
+        target_json = "./data.json" if is_test else "./auto.json"
+        script_to_load = "datacollection.m2" if is_test else "autooverview.m2"
+        routine_name = "dataCollection" if is_test else "autoOverview"
+
+        headers_str = '"Name", "H-Vector", "Hilbert Series", "Hilbert Multiplicity", "Betti Table", "Is Artinian", "HasWLP", "HasSLP", "HasKoszulTail", "KoszulTails", "HasMaximalKoszulTail"'
+
+        action_script = f"""
+        {setup_script}
+        print "--- SUCCESS: K IS DEFINED ---";
+        if ideal K == 0 then (
+            print "--- ZERO IDEAL DETECTED: BYPASSING REGULAR COMPUTATION ---";
+            outTxt = "{target_txt}";
+            outTxt << "Name: n-Simplex" << endl;
+            outTxt << "H-Vector: {{1}}" << endl;
+            outTxt << "Hilbert Series: 1" << endl;
+            outTxt << "Hilbert Multiplicity: 1" << endl;
+            outTxt << "Betti Table: (0,{{0}},0) => 1" << endl;
+            outTxt << "Is Artinian: false" << endl;
+            outTxt << "HasWLP: true" << endl;
+            outTxt << "HasSLP: true" << endl;
+            outTxt << "HasKoszulTail: false" << endl;
+            outTxt << "KoszulTails: {{}}" << endl;
+            outTxt << "HasMaximalKoszulTail: false" << endl;
+            outTxt << close;
+        ) else (
+            load "{wsl_project_path}/{script_to_load}";
+            print "-- LOADED COMPUTATION PACKAGE --";
+            dataList = {routine_name}(R, K);
+            outputText = "{target_txt}";
+            outputJSON = "{target_json}";
+            headers = {{{headers_str}}};
+            for data in dataList do (
+                apply(headers, data, (headerName, dataEntry) -> (
+                    outputText << headerName | ": " << toString(dataEntry) << endl;
+                ));
+                outputText << endl;
+            );
+            outputText << close;
+            outputJSON << toString dataList << close;
+            print "--- DATA COLLECTION COMPLETE ---";
+        )
+        """
+
+        if session_exists:
+            script_content = action_script
+        else:
+            script_content = init_script + action_script
+
+        script_content = script_content.replace('\r\n', '\n')
+        
+        with open(win_temp_path, "w", newline='\n') as f:
+            f.write(script_content)
+
+        def run_tmux_task():
+            with m2_execution_lock:
+                try:
+                    if session_exists:
+                        subprocess.run(["wsl", "tmux", "send-keys", "-t", session_name, "C-c"], capture_output=True)
+                        time.sleep(0.5) 
+                        subprocess.run(["wsl", "tmux", "send-keys", "-t", session_name, f'load "{wsl_temp_path}"', "Enter"])
+                    else:
+                        subprocess.run(["wsl", "tmux", "kill-session", "-t", session_name], capture_output=True)
+                        robust_cmd = f"trap 'tmux kill-session -t {session_name}' EXIT; tmux new-session -s {session_name} M2"
+                        full_command = f'cmd /c start wsl --cd "{project_dir}" bash -c "{robust_cmd}"'
+                        subprocess.Popen(full_command, shell=True)
+                        time.sleep(3.0)
+                        subprocess.run(["wsl", "tmux", "send-keys", "-t", session_name, f'load "{wsl_temp_path}"', "Enter"])
+                    time.sleep(1.0)
+                finally:
+                    time.sleep(2.0) 
+                    if os.path.exists(win_temp_path):
+                        os.remove(win_temp_path)
+
+        import threading
+        threading.Thread(target=run_tmux_task, daemon=True).start()
+    def reset_m2_session(self):
+        """Kills the existing tmux session to force a cold-boot of M2."""
+        session_name = "M2_Session"
+        # Kill the session; ignore errors if it doesn't exist
+        subprocess.run(["wsl", "tmux", "kill-session", "-t", session_name], capture_output=True)
+        print("--- M2 SESSION TERMINATED: CLEAN REBOOT SCHEDULED ---")
 class MultidegreeComplex(SimplicialComplex):
     def __init__(self, multidegree: np.ndarray, semigroup_generators: np.ndarray):
         super().__init__(self._compute_max_faces(multidegree, semigroup_generators))
@@ -192,25 +397,3 @@ class StanleyReisnerComplex(SimplicialComplex):
         vertex_set = set(mit.flatten(nonfaces))
         super().__init__([vertex_set - nonface for nonface in nonfaces])
         self.nonfaces = nonfaces
-
-
-def main():
-    delta = SimplicialComplex([{1}, 
-                               {2,3}, {3,8}, {8,2}, 
-                               {4,5}, {5,8}, {8,4}, 
-                               {6,7}, {7,8}, {8,6}, 
-                               {9,10}, {10,18}, {18,17}, {17,9},
-                               {11,12}, {12,13}, {13,18}, {18,11},
-                               {14,15}, {15,16}, {16,18}, {18,14},
-                               {19,20}, {20,21}, {21,22}, {22,23}, {23,19}])
-    delta.draw()
-    # for U in it.combinations(delta.vertices, r=4):
-    #     rest_delta = delta.restriction(set(U))
-    #     # print(f'{set(U)=}')
-    #     # print(f'{rest_delta.maximal_faces=}')
-    #     print(f'{rest_delta.betti_numbers=}')
-    #     # rest_delta.draw(with_labels=True)
-
-
-if __name__ == '__main__':
-    main()

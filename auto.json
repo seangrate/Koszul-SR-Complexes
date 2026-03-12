@@ -1,0 +1,1 @@
+{{original, 1-6*T^2+8*T^3-3*T^4, {1, 4}, (0,1), new BettiTally from {(0,{0},0) => 1, (1,{2},2) => 6, (2,{3},3) => 8, (3,{4},4) => 3}, (), false, false, false, , false}}
