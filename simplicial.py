@@ -1,73 +1,30 @@
-import functools as ft
-import itertools as it
-import more_itertools as mit
-from typing import List, Set
-from itertools import combinations
-import matplotlib.pyplot as plt
-from matplotlib.collections import PolyCollection
-import networkx as nx
-import numpy as np
-from scipy.optimize import linprog
-import subprocess
 import os
 import time
 import tempfile
-from utils import smith_normal_form
 import json
 import threading
 import subprocess
 import time
 import uuid
 
+import functools as ft
+import itertools as it
+import more_itertools as mit
+from typing import List, Set
+from itertools import combinations
+import numpy as np
+from scipy.optimize import linprog
+
+import matplotlib.pyplot as plt
+from matplotlib.collections import PolyCollection
+import networkx as nx
+
+from m2controller import M2Controller
+from utils import smith_normal_form
+
+
 # Define this lock globally, outside of any class, near your imports
 m2_execution_lock = threading.Lock()
-
-class M2Controller:
-    _instance = None
-    
-    @classmethod
-    def get_instance(cls):
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-
-    def __init__(self):
-        # Invoking bash -lc ensures the WSL environment loads necessary PATH variables
-        self.process = subprocess.Popen(
-            ["wsl", "bash", "-lc", "M2 --no-readline --quiet"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1
-        )
-        self.initialized = False
-        self.lock = threading.Lock()
-        
-        # Allow WSL a moment to initialize and verify the process remains active
-        time.sleep(1.0)
-        if self.process.poll() is not None:
-            error_log = self.process.stderr.read()
-            print(f"CRITICAL ERROR: M2 Boot Failure. Output:\n{error_log}")
-
-    def run_script(self, script_path):
-        with self.lock:
-            if self.process.poll() is not None:
-                print("Error: The background M2 process has terminated unexpectedly.")
-                return
-
-            cmd = f'load "{script_path}"'
-            self.process.stdin.write(cmd + '\n')
-            self.process.stdin.flush()
-            
-            delimiter = "---M2_EXECUTION_COMPLETE---"
-            self.process.stdin.write(f'print "{delimiter}"\n')
-            self.process.stdin.flush()
-            
-            while True:
-                line = self.process.stdout.readline()
-                if delimiter in line or not line:
-                    break
 
 class SimplicialComplex:
     def __init__(self, faces: List[Set]):
@@ -302,8 +259,6 @@ class SimplicialComplex:
             return win_path.replace("C:", "/mnt/c").replace("\\", "/")
         
         wsl_project_path = to_wsl(project_dir)
-        
-        # Generate a unique file name to prevent I/O race conditions
         unique_id = uuid.uuid4().hex[:8]
         temp_filename = f"temp_m2_interactive_{unique_id}.m2"
         win_temp_path = os.path.join(project_dir, temp_filename)
@@ -316,12 +271,9 @@ class SimplicialComplex:
         )
         session_exists = (check_session.returncode == 0)
 
-        # Inside open_m2_interactive
-        # Inside open_m2_interactive
         init_script = f"""
         print "--- INITIALIZING M2 SESSION ---";
         path = path | {{"{wsl_project_path}/"}};
-        -- needsPackage is safer for persistent sessions than loadPackage
         needsPackage "SimplicialComplexes";
         print "-- LOADED SIMPLICIAL COMPLEXES PACKAGE --";
         load "{wsl_project_path}/LefschetzProperties/Code/bars.m2";
@@ -333,11 +285,12 @@ class SimplicialComplex:
 
         setup_script = self._generate_m2_setup()
         
-        # Dynamically map the target files and routines based on test state
         target_txt = "./data.txt" if is_test else "./auto.txt"
         target_json = "./data.json" if is_test else "./auto.json"
         script_to_load = "datacollection.m2" if is_test else "autooverview.m2"
         routine_name = "dataCollection" if is_test else "autoOverview"
+
+        headers_str = '"Name", "H-Vector", "Hilbert Series", "Hilbert Multiplicity", "Betti Table", "Is Artinian", "HasWLP", "HasSLP", "HasKoszulTail", "KoszulTails", "HasMaximalKoszulTail"'
 
         action_script = f"""
         {setup_script}
@@ -363,7 +316,7 @@ class SimplicialComplex:
             dataList = {routine_name}(R, K);
             outputText = "{target_txt}";
             outputJSON = "{target_json}";
-            headers = {{"{ '", "'.join(["Name", "H-Vector", "Hilbert Series", "Hilbert Multiplicity", "Betti Table", "Is Artinian", "HasWLP", "HasSLP", "HasKoszulTail", "KoszulTails", "HasMaximalKoszulTail"]) }"}};
+            headers = {{{headers_str}}};
             for data in dataList do (
                 apply(headers, data, (headerName, dataEntry) -> (
                     outputText << headerName | ": " << toString(dataEntry) << endl;
@@ -387,33 +340,24 @@ class SimplicialComplex:
             f.write(script_content)
 
         def run_tmux_task():
-            # Non-blocking lock: if true, a computation is already queuing/running.
-            # We silently drop this redundant call to prevent tmux overload.
-            if not m2_execution_lock.acquire(blocking=False):
-                os.remove(win_temp_path)
-                return
-                
-            try:
-                if session_exists:
-                    subprocess.run(["wsl", "tmux", "send-keys", "-t", session_name, f'load "{wsl_temp_path}"', "Enter"])
-                else:
-                    subprocess.run(["wsl", "tmux", "kill-session", "-t", session_name], capture_output=True)
-                    
-                    robust_cmd = f"trap 'tmux kill-session -t {session_name}' EXIT; tmux new-session -s {session_name} M2"
-                    full_command = f'cmd /c start wsl --cd "{project_dir}" bash -c "{robust_cmd}"'
-                    
-                    subprocess.Popen(full_command, shell=True)
-                    time.sleep(3.0)
-                    subprocess.run(["wsl", "tmux", "send-keys", "-t", session_name, f'load "{wsl_temp_path}"', "Enter"])
-                
-                # Yield a brief moment to ensure tmux ingests the keystrokes before unlocking
-                time.sleep(1.0)
-            finally:
-                # Cleanup the unique temporary file and release the lock for the next interaction
-                time.sleep(2.0) 
-                if os.path.exists(win_temp_path):
-                    os.remove(win_temp_path)
-                m2_execution_lock.release()
+            with m2_execution_lock:
+                try:
+                    if session_exists:
+                        subprocess.run(["wsl", "tmux", "send-keys", "-t", session_name, "C-c"], capture_output=True)
+                        time.sleep(0.5) 
+                        subprocess.run(["wsl", "tmux", "send-keys", "-t", session_name, f'load "{wsl_temp_path}"', "Enter"])
+                    else:
+                        subprocess.run(["wsl", "tmux", "kill-session", "-t", session_name], capture_output=True)
+                        robust_cmd = f"trap 'tmux kill-session -t {session_name}' EXIT; tmux new-session -s {session_name} M2"
+                        full_command = f'cmd /c start wsl --cd "{project_dir}" bash -c "{robust_cmd}"'
+                        subprocess.Popen(full_command, shell=True)
+                        time.sleep(3.0)
+                        subprocess.run(["wsl", "tmux", "send-keys", "-t", session_name, f'load "{wsl_temp_path}"', "Enter"])
+                    time.sleep(1.0)
+                finally:
+                    time.sleep(2.0) 
+                    if os.path.exists(win_temp_path):
+                        os.remove(win_temp_path)
 
         import threading
         threading.Thread(target=run_tmux_task, daemon=True).start()

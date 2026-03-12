@@ -3,7 +3,7 @@ import networkx as nx
 from scipy.spatial import ConvexHull
 from scipy.spatial.qhull import QhullError
 import matplotlib.path as mpath
-
+from math import dist
 from bokeh.plotting import figure, curdoc
 from bokeh.models import ColumnDataSource, Div, Button, PreText
 from bokeh.events import Tap, DoubleTap
@@ -13,6 +13,7 @@ from simplicial import SimplicialComplex
 
 import re
 import os
+import sys
 
 node_coords = {}
 maximal_faces = []
@@ -28,8 +29,14 @@ def get_maximal_faces(faces):
         return []
     return [face for face in faces if sum(set(face) <= set(other) for other in faces) == 1]
 
-def update_complex():
+def update_complex(run_m2=True):
     global sc_instance, maximal_faces
+
+    if not run_m2:
+        colors = ["red" if nid in selected_nodes else "navy" for nid in node_coords.keys()]
+        source_nodes.data.update(color=colors)
+        return
+
     sc_instance = SimplicialComplex(maximal_faces)
     
     colors = ["red" if nid in selected_nodes else "navy" for nid in node_coords.keys()]
@@ -71,8 +78,8 @@ def update_complex():
     if maximal_faces:
         stats_text = f"<b>Maximal Faces:</b> {maximal_faces}<br>"
         stats_text += f"<b>Dimension:</b> {sc_instance.dim}<br>"
-        stats_text += f"<b>F-vector:</b> {sc_instance.f_vector}<br>"
-        stats_text += f"<b>H-vector:</b> {sc_instance.h_vector}<br>"
+        stats_text += f"<b>f-vector:</b> {sc_instance.f_vector}<br>"
+        stats_text += f"<b>h-vector:</b> {sc_instance.h_vector}<br>"
         stats_text += f"<b>Is Acyclic:</b> {sc_instance.is_acyclic}<br>"
     else:
         stats_text = "<b>Complex is empty.</b>"
@@ -87,7 +94,7 @@ def on_tap(event):
                 selected_nodes.remove(nid)
             else:
                 selected_nodes.add(nid)
-            update_complex()
+            update_complex(run_m2=False)
             return
 
     for idx, e_tuple in enumerate(source_edges.data['face_tuple']):
@@ -111,6 +118,25 @@ def on_tap(event):
     maximal_faces.append({new_id})
     update_complex()
 
+def test_complex():
+    data_display_div.text = "<div style='color: #dc3545; font-weight: bold; padding: 10px;'>Running test computation...</div>"
+    sc_instance.open_m2_interactive()
+
+def auto_complex():
+    auto_display_div.text = "<div style='color: #007bff; font-weight: bold; padding: 10px;'>Loading automatic overview...</div>"
+    sc_instance.open_m2_interactive(is_test=False)
+
+def clear_all_action():
+    global maximal_faces, node_coords, selected_nodes
+    maximal_faces.clear()
+    node_coords.clear()
+    selected_nodes.clear()
+    update_complex()
+
+def exit_action():
+    sc_instance.reset_m2_session()
+    os._exit(0)
+
 def on_double_tap(event):
     px, py = event.x, event.y
     
@@ -127,21 +153,25 @@ def on_double_tap(event):
             update_complex()
             return
 
-def test_complex():
-    sc_instance.open_m2_interactive()
-
-def auto_complex():
-    sc_instance.open_m2_interactive(is_test=False)
-
-def dist(p1, p2):
-    return np.sqrt((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2)
-
 def dist_to_segment(p, v, w):
-    l2 = dist(v, w)**2
-    if l2 == 0: return dist(p, v)
-    t = max(0, min(1, np.dot(np.array(p) - np.array(v), np.array(w) - np.array(v)) / l2))
-    proj = np.array(v) + t * (np.array(w) - np.array(v))
-    return dist(p, proj)
+    # Squared length of segment vw
+    l2 = (v[0] - w[0])**2 + (v[1] - w[1])**2
+    
+    # v == w case
+    if l2 == 0:
+        return dist(p, v)
+
+    # Consider the line extending the segment, parameterized as v + t (w - v).
+    # We find projection of point p onto the line. 
+    # It falls where t = [(p-v) . (w-v)] / |w-v|^2
+    # We clamp t from [0,1] to handle points outside the segment.
+    t = ((p[0] - v[0]) * (w[0] - v[0]) + (p[1] - v[1]) * (w[1] - v[1])) / l2
+    t = max(0, min(1, t))
+    
+    projection = (v[0] + t * (w[0] - v[0]), 
+                  v[1] + t * (w[1] - v[1]))
+    
+    return dist(p, projection)
 
 def perform_cascading_delete(target_simplex):
     global maximal_faces
@@ -149,7 +179,7 @@ def perform_cascading_delete(target_simplex):
     new_faces = []
     
     for face in maximal_faces:
-        if target_set.issubset(face):
+        if face <= target_set:
             for v in target_set:
                 sub_face = set(face) - {v}
                 if sub_face:
@@ -273,7 +303,7 @@ def export_action():
     export_str = f"my_complex = SimplicialComplex([{faces_str}])"
     export_out.text = export_str
     print(f"\n--- EXPORT ---\n{export_str}\n--------------\n")
-    
+
 p = figure(
     title="Simplicial Complex GUI (Double-Click to Delete)", 
     tools="pan,wheel_zoom,reset", 
@@ -318,6 +348,12 @@ btn_create.on_click(create_simplex_action)
 btn_test = Button(label="Run Test Script", button_type="danger", width=300)
 btn_test.on_click(test_complex)
 
+btn_clear = Button(label="Clear All Simplices", button_type="warning", width=300)
+btn_clear.on_click(clear_all_action)
+
+btn_exit = Button(label="Exit Application", button_type="danger", width=300)
+btn_exit.on_click(exit_action)
+
 # --- NEW DATA DISPLAY DIV ---
 parsed_html_data = load_and_format_data("data.txt")
 data_display_div = Div(
@@ -359,7 +395,9 @@ side_panel = column(
     btn_test, 
     data_display_div, 
     btn_export, 
-    btn_reset, # Added here
+    btn_clear,
+    btn_reset, 
+    btn_exit,
     export_out
 )
 layout = row(p, side_panel)
